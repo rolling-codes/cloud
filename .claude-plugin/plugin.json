@@ -1,0 +1,7 @@
+{
+  "name": "cloud",
+  "description": "Deterministic execution control layer for Claude. Enforces token minimization, modular schema-validated generation, adaptive model selection, and self-correcting failure recovery via a structured pipeline.",
+  "author": {
+    "name": "rolling-codes"
+  }
+}

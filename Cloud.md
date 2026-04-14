@@ -1,4 +1,4 @@
-# Cloud.md — Claude Code Plugin Specification (Refactored v3)
+# — Claude Code Plugin Specification (Refactored v3)
 
 ## PURPOSE
 
