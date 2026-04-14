@@ -28,6 +28,13 @@ _BANNER = (
 )
 
 
+def _run_and_print(client: anthropic.Anthropic, raw: str, state: SessionState | None) -> None:
+    """Run the pipeline and print the result."""
+    result = run_pipeline(client, raw, state=state)
+    print("\nOUTPUT:")
+    print(result)
+
+
 def main() -> None:
     client = anthropic.Anthropic()
 
@@ -45,9 +52,7 @@ def main() -> None:
         raw = " ".join(sys.argv[1:])
         print(_BANNER)
         print()
-        result = run_pipeline(client, raw, state=None)
-        print("\nOUTPUT:")
-        print(result)
+        _run_and_print(client, raw, state=None)
         return
 
     # ── Interactive session — stateful ─────────────────────────────────────────
@@ -55,7 +60,10 @@ def main() -> None:
     print()
     print("SESSION MODE")
     print("  Enter task on one line, or use command format:")
-    print("    TASK: <desc>  MODE: TOKEN|MODULE|STRIP  MODEL: SMALL|MEDIUM|LARGE  MAX_TOKENS: <n>")
+    print(
+        "    TASK: <desc>  MODE: TOKEN|MODULE|STRIP"
+        "  MODEL: SMALL|MEDIUM|LARGE  MAX_TOKENS: <n>"
+    )
     print("  Multi-line input: end with a blank line.")
     print("  Commands: 'exit' to quit, 'snapshots' to view step history.")
     print()
@@ -88,7 +96,11 @@ def main() -> None:
                     else:
                         for s in state.snapshots:
                             preview = repr(s["output"][:60])
-                            print(f"  step={s['step']} validation={s['validation']} output={preview}")
+                            print(
+                                f"  step={s['step']} "
+                                f"validation={s['validation']} "
+                                f"output={preview}"
+                            )
                     print()
                     continue
 
@@ -107,7 +119,5 @@ def main() -> None:
         if not lines:
             continue
 
-        result = run_pipeline(client, "\n".join(lines), state=state)
-        print("\nOUTPUT:")
-        print(result)
+        _run_and_print(client, "\n".join(lines), state=state)
         print()

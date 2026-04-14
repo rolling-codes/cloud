@@ -6,7 +6,12 @@ Allowed mode pipelines per spec:
   TOKEN → MODULE   (compressed, then structured — used in recovery)
 
 Single API call uses a fixed system prompt per mode for determinism.
+STRIP→MODULE upgrades the model to at least MEDIUM for the generation step.
 """
+
+from __future__ import annotations
+
+from collections.abc import Callable
 
 import anthropic
 
@@ -46,6 +51,9 @@ _SYSTEM: dict[str, str] = {
     ),
 }
 
+# When STRIP chains to MODULE, escalate from SMALL to MEDIUM for generation.
+_STRIP_CHAIN_UPGRADE: dict[str, str] = {"SMALL": "MEDIUM"}
+
 
 def _single_call(
     client: anthropic.Anthropic,
@@ -54,18 +62,33 @@ def _single_call(
     model_key: str,
     max_tokens: int,
     constraints: str | None,
+    on_token: Callable[[str], None] | None = None,
 ) -> str:
-    """One API call: task → Claude → text response."""
+    """One API call: task → Claude → text response.
+
+    If on_token is provided, streams the response and calls on_token for each
+    text chunk. Always returns the full collected text.
+    """
     user_parts = [f"TASK: {task}"]
     if constraints:
         user_parts.append(f"CONSTRAINTS: {constraints}")
 
-    response = client.messages.create(
+    kwargs = dict(
         model=MODELS[model_key],
         max_tokens=max(max_tokens, 256),
         system=_SYSTEM[mode],
         messages=[{"role": "user", "content": "\n".join(user_parts)}],
     )
+
+    if on_token is not None:
+        chunks: list[str] = []
+        with client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                on_token(text)
+                chunks.append(text)
+        return "".join(chunks)
+
+    response = client.messages.create(**kwargs)
     return next((b.text for b in response.content if b.type == "text"), "")
 
 
@@ -77,16 +100,34 @@ def execute(
     max_tokens: int,
     constraints: str | None,
     classification: dict,
+    on_token: Callable[[str], None] | None = None,
 ) -> str:
     """EXECUTE with mode-pipeline routing.
 
     STRIP chains into MODULE or TOKEN depending on task type:
       type==format → STRIP → TOKEN
       else         → STRIP → MODULE
+
+    When chaining STRIP→MODULE, the model is upgraded to at least MEDIUM
+    so the structured generation step has enough capacity.
+
+    on_token: if provided, streams the final generation step. The STRIP
+    reduction pass is never streamed (it's an internal step).
     """
     if mode == "STRIP":
-        stripped_ctx = _single_call(client, task, "STRIP", model_key, max_tokens, constraints)
+        # STRIP pass: always silent (internal context reduction)
+        stripped_ctx = _single_call(
+            client, task, "STRIP", model_key, max_tokens, constraints
+        )
         next_mode = "TOKEN" if classification.get("type") == "format" else "MODULE"
-        return _single_call(client, stripped_ctx, next_mode, model_key, max_tokens, None)
+        # Upgrade model for the generation step if we're producing structured output
+        next_model = (
+            _STRIP_CHAIN_UPGRADE.get(model_key, model_key)
+            if next_mode == "MODULE"
+            else model_key
+        )
+        return _single_call(
+            client, stripped_ctx, next_mode, next_model, max_tokens, None, on_token
+        )
 
-    return _single_call(client, task, mode, model_key, max_tokens, constraints)
+    return _single_call(client, task, mode, model_key, max_tokens, constraints, on_token)

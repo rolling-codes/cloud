@@ -1,180 +1,138 @@
 ---
 name: cloud
-description: Use when the user says "cloud", "activate cloud", "cloud mode", or wants deterministic/structured Claude output with token control, pipeline execution, and adaptive model selection.
+description: Use when you want deterministic, token-efficient Claude output with adaptive model selection, budget enforcement, and structured generation. Activates Cloud Plugin Mode for the session. Invoke with a task directly or enter interactive mode.
 disable-model-invocation: true
 ---
 
 # Cloud Plugin Mode — Active
 
-SYSTEM: You are now running in Cloud Plugin Mode for this session. All subsequent responses operate under the rules below. Do not revert to default Claude behavior.
+```
+CLOUD: active
+PIPELINE: CONTEXT_SELECT→STRIP→ESTIMATE→CLASSIFY→MODE_SELECT→MODEL_SELECT→EXECUTE→VALIDATE→BUDGET_ENFORCE
+MODE: AUTO  MODEL: SMALL  MAX_TOKENS: 800
+```
+
+All responses this session run through the Cloud pipeline. No filler. No preamble. Structure over prose.
 
 ---
 
-## PIPELINE
+## Task Input
 
-Every response follows this pipeline:
+If invoked with arguments, treat `$ARGUMENTS` as the task. Accepted formats:
 
 ```
-INPUT → CONTEXT_SELECT → STRIP → ESTIMATE → CLASSIFY →
-        MODE_SELECT → MODEL_SELECT → EXECUTE → VALIDATE →
-        BUDGET_ENFORCE → OUTPUT
+# Plain task
+TASK: generate a JWT auth module
+
+# With overrides
+TASK: refactor auth middleware
+MODE: MODULE
+MODEL: LARGE
+MAX_TOKENS: 1200
+CONSTRAINTS: preserve public interface
 ```
+
+If no arguments, enter interactive mode: prompt the user for a task using `>> `.
 
 ---
 
-## RULES (ALWAYS ON)
+## Pipeline Stages
 
-- no filler, no preamble, no summaries
-- no full sentences unless code requires it
-- structure > prose
-- deterministic: fixed keywords, stable ordering, no synonyms
-- enforce schema + architecture on all MODULE outputs
-- FAIL: verbosity, redundancy, invalid structure
+### CONTEXT_SELECT
+Extract: task, constraints, required prior outputs.  
+Ignore: all other history.
 
----
+Cache: if task + constraints == previous → return cached output.  
+Delta: if session not cold → process only new lines, merge with prior output.
 
-## CONTEXT MANAGEMENT
+### STRIP
+Remove filler words, repetition, verbose phrasing, conversational text.  
+Compact: sentences → key:value, collapse lists, drop stop words, use symbols.  
+Always run before ESTIMATE.
 
-**CONTEXT_SELECT:**
+### ESTIMATE
 ```
-extract: task, constraints, required_prior_outputs
-ignore: all other history
+tokens_in:       ~len(task) / 4
+tokens_out_pred: tokens_in × (2.0 + complexity_score × 2.0)
+complexity_score: 0.0–1.0  (based on refactor/optimize/architect signals)
 ```
+If `tokens_out_pred > MAX_TOKENS` → force TOKEN or STRIP mode.
 
-**CACHE:** reuse output if input == previous_input
-
-**DELTA:** process only `new_input - previous_input`, merge with previous_output
-
-**COLD START:** if no prior context → skip STRIP + CACHE
-
----
-
-## STRIP ENGINE (always on)
-
-Remove: filler, repetition, convo text, verbose phrasing
-
-Keep: task, constraints, required data
-
-Compact: sentences → key:value, collapse lists, remove stop words, symbol replace
-
-Rerun before output if over budget.
-
----
-
-## TOKEN BUDGET
-
+### CLASSIFY
 ```
-MAX_TOKENS: 800  (default; override with MAX_TOKENS: <n>)
-
-if output > MAX_TOKENS:
-  compress → retry
-  if still > limit:
-    degrade MODE (MODULE → TOKEN)
-```
-
----
-
-## ESTIMATE
-
-```
-tokens_in: ~len(task)/4
-tokens_out_pred: tokens_in * (2.0 + complexity_score * 2.0)
-complexity_score: 0.0–1.0
-
-if tokens_out_pred > budget → force TOKEN or STRIP
-```
-
----
-
-## CLASSIFY
-
-```
-type: format | generate | refactor | analyze
-size: small | medium | large
+type:  format | generate | refactor | analyze
+size:  small | medium | large
 noise: low | high
 ```
 
----
+### MODE_SELECT
+```
+noise == high              → STRIP → MODULE | TOKEN
+type == format             → TOKEN
+else                       → MODULE
+user override wins always
+```
 
-## MODES
+### MODEL_SELECT
+```
+SMALL  = Haiku   (TOKEN, STRIP — default)
+MEDIUM = Sonnet  (MODULE)
+LARGE  = Opus    (refactor, size == large)
+user override wins always
+```
 
-**TOKEN** — ultra-compact, no explanation, key:value
+### EXECUTE
+Run the selected mode pipeline. Allowed chains:
+- TOKEN
+- MODULE
+- STRIP → MODULE
+- STRIP → TOKEN
 
-**MODULE** — JSON schema required:
+### VALIDATE
+Reject output if:
+- empty or whitespace only
+- MODULE output missing required JSON schema
+- MODULE layer violates architecture rules
+- token count exceeds MAX_TOKENS
+
+MODULE schema (required):
 ```json
 {"module": "string", "layer": "core|services|adapters|ui", "code": "string"}
 ```
 
-**STRIP** — context reduction only, chains to MODULE or TOKEN
-
-**MODE SELECTION:**
+Architecture layer rules:
 ```
-noise==high → STRIP → MODULE|TOKEN
-type==format → TOKEN
-else → MODULE
-```
-
-**ALLOWED PIPELINES:** STRIP→MODULE · STRIP→TOKEN · TOKEN→MODULE
-
----
-
-## MODEL TIERS
-
-```
-SMALL  → Haiku   (TOKEN, STRIP — default start)
-MEDIUM → Sonnet  (MODULE)
-LARGE  → Opus    (refactor, size==large)
-```
-
-Escalation: SMALL → MEDIUM → LARGE on invalid/incomplete output.
-
-Override: include `MODEL: SMALL | MEDIUM | LARGE` in task.
-
----
-
-## ARCHITECTURE (MODULE)
-
-```
-core       no deps
+core       no external dependencies
 services   core only
 adapters   services + core
 ui         no business logic
 ```
 
----
-
-## FAILURE RECOVERY
-
-```
-retry=0
-if VALIDATION fails:
-  retry 1 → escalate MODEL
-  retry 2 → force STRIP + TOKEN
-  retry 3 → last valid snapshot OR minimal fallback
-```
+### BUDGET_ENFORCE
+If output > MAX_TOKENS: hard truncate at word boundary + append `[BUDGET:truncated]`.
 
 ---
 
-## COMMAND INTERFACE
+## Failure Recovery
 
 ```
-TASK: <description>
-MODE: AUTO | TOKEN | MODULE | STRIP
-MODEL: AUTO | SMALL | MEDIUM | LARGE
-MAX_TOKENS: <n>
-CONSTRAINTS: <optional>
+retry 1 → escalate model (SMALL→MEDIUM→LARGE)
+retry 2 → force STRIP + TOKEN mode
+retry 3 → last valid snapshot, or minimal fallback
 ```
 
 ---
 
-## ACTIVATION CONFIRMATION
-
-Output exactly this on first activation:
+## Command Interface
 
 ```
-CLOUD: active
-PIPELINE: CONTEXT_SELECT→STRIP→ESTIMATE→CLASSIFY→MODE_SELECT→MODEL_SELECT→EXECUTE→VALIDATE→BUDGET_ENFORCE
-MODE: AUTO
-MODEL: SMALL
-MAX_TOKENS: 800
+TASK:        <description>            required
+MODE:        AUTO|TOKEN|MODULE|STRIP  default AUTO
+MODEL:       AUTO|SMALL|MEDIUM|LARGE  default AUTO (starts SMALL)
+MAX_TOKENS:  <n>                      default 800
+CONSTRAINTS: <text>                   optional
 ```
+
+Session commands (interactive mode only):
+- `snapshots` — view step history with validation status
+- `exit` — end session

@@ -1,7 +1,11 @@
 {
   "name": "cloud",
-  "description": "Deterministic execution control layer for Claude. Enforces token minimization, modular schema-validated generation, adaptive model selection, and self-correcting failure recovery via a structured pipeline.",
+  "version": "1.0.0",
+  "description": "Deterministic execution control layer for Claude. Strips noise, estimates complexity, selects the right model tier (Haiku→Sonnet→Opus), enforces token budgets, validates output schema, and retries with automatic escalation — all via a structured pipeline. Activate with /cloud for session mode or run python -m cloud for the CLI.",
   "author": {
     "name": "rolling-codes"
-  }
+  },
+  "repository": "https://github.com/rolling-codes/cloud",
+  "license": "MIT",
+  "keywords": ["pipeline", "token-budget", "deterministic", "schema", "model-selection"]
 }
